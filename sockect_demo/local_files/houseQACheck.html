@@ -1,0 +1,316 @@
+/**
+ * 房源回访审核
+ */
+
+define(function () {
+
+  var BasePage = require('../../page/BasePageView');
+  var Form = require('../../module/FormView');
+  var Button = require('../../module/Button');
+  var BaseLayer = require('../../module/layer/BaseLayer');
+  var validateEl = require('../../module/validateFormEle');
+  var tipLayer = require('../comp/tipLayer');
+  var cascadeView = require('../clue/cascadeView');
+  var getVerifyLayer = function () {
+    var brokerLayer = BaseLayer({
+      html: '',
+      style: {
+        left: 'center',
+        top: 'center'
+      },
+      body: 'close',
+      className: 'layer-module'
+    });
+    return brokerLayer;
+  };
+  return BasePage.extend({
+    show: function () {
+      var _this = this;
+      _this.$el.show();
+    },
+    initialize: function (option, args) {
+      var _this = this;
+      var template = args.template;
+      _this.show();
+      _this.$el.html(template);
+    },
+
+    setArgs: function (id, houseCode) {
+      var _this = this;
+      $('.position a').html('问答审核');
+      $.nav.setNav(location.hash.split('#')[1], '问答审核');
+      var params = location.hash.split('/')
+      _this.taskId = params[3]
+      _this.taskType = params[4]
+      _this.followRemark = ''
+      var _queryParams = params[5];
+      _this.queryParams = _queryParams ? JSON.parse(_queryParams.replace(/\$/g,'"')): ''
+      _this.renderDetail()
+    },
+    templateUrl: 'houseQA/houseQACheck',
+    styles: [
+      'css/houseQA/houseQACheck.css'
+    ],
+    events: {
+      'click .resultchange':'resultchange',
+      'click .otherReason':'handleClickOtherReason',
+      'keyup .dealDetailText': 'changeTextareaNum',
+      'click .actFollow':'actFollow',
+    },
+    renderDetail:function(){
+      var _this = this;
+      var request = new $.Trans({
+        url: $.api.getKeHouseQAdetail,
+        data: {
+          taskId: _this.taskId,
+          taskType:_this.taskType,
+        }
+      });
+      request.request().done(function (data) {
+        if (data.code == 1) {
+          _this.project = data.data.project;
+          _this.state = data.data.bizField.state;
+          _this.$el.find('.houseQACheckInfo').html(_.template(_this.$el.find('.verifyTemplate').html())(data));
+          
+          _this.form = new Form({
+            el: _this.$el.find('form')
+          }); 
+
+        } else {
+          $.Toast.getInstance().showError(data.msg || '审核详情请求失败!');
+        }
+      }).fail(function () {
+        $.Toast.getInstance().showError('审核详情请求失败!');
+      });
+      
+    },
+    getReasonList:function(e){
+      var _this = this;
+      var request = new $.Trans({
+        url: $.api.getHouseQAFailReason,
+        data: {
+          type: _this.taskType == "34" ? "ke_question_reject_reason" : "ke_answer_reject_reason",
+        }
+      });
+      request.request().done(function (data) {
+        if (data.code == 1 && _this.taskType == "35") {
+          // data.dataList = _this.taskType == "34" ? data.data.ke_question_reject_reason : data.data.ke_answer_reject_reason;
+          data.dataList =  data.data.ke_answer_reject_reason;
+          _this.$el.find('.resultInfo').html(_.template(_this.$el.find('.resultFailTemplate').html())(data));
+        } else {
+          $.Toast.getInstance().showError(data.msg || '审核不通过原因请求失败!');
+        }
+      }).fail(function () {
+        $.Toast.getInstance().showError('审核不通过原因请求失败!');
+      });
+    },
+    resultchange:function(e){
+      var _this = this;
+      var target = $(e.currentTarget);
+      var val = target.attr('value');
+      var formValue = _this.form.getFormValue();
+      switch(val){
+        case "2":
+          _this.$el.find('.resultInfo').html(_.template(_this.$el.find('.emptyTemplate').html()));
+          break;
+        case "5":
+          _this.taskType == "35" && _this.getReasonList();
+          break;
+        default:
+           _this.$el.find('.resultInfo').html(_.template(_this.$el.find('.emptyTemplate').html()));
+      }
+
+      if(val !== formValue.reviewedResultCode){
+        formValue.rejectReason = [];
+      }
+    },
+    handleClickOtherReason:function(e){
+      var _this = this;
+      var rejectReason = _this.form.getFormValue().rejectReason;
+      var nameList = [];
+      _.each(rejectReason,function(item){
+        var obj = JSON.parse(item);
+        var key = Object.keys(obj)[0];
+        var val = obj[key];
+        nameList.push(val);
+      })
+      if(nameList.join(';').indexOf("其他") !== -1){
+        _this.$el.find('.otherReasonInfo').html(_.template(_this.$el.find('.otherReasonTemplate').html()));
+      }else{
+        _this.$el.find('.otherReasonInfo').html(_.template(_this.$el.find('.emptyTemplate').html()));
+
+      }
+
+    },
+    changeTextareaNum: function (e) {
+      var _this = this;
+      var target = $(e.currentTarget);
+      var _val = target.val();
+      _this.$el.find('.dealDetailTextNum').html(_val.length + '/200');
+      if (_val.length > 200) {
+        _this.$el.find('.dealDetailTextNum').css('color', 'red');
+      } else {
+        _this.$el.find('.dealDetailTextNum').css('color', 'black');
+      }
+    },
+    actFollow:function(e){
+      var _this = this;
+      _this.form._validate = function (el) {
+        return validateEl(el, true, _this.showError);
+      };
+      var formValue = _this.form.getFormValue()
+      if (!formValue) {
+        return false;
+      }
+      var resultObj = {
+        '4':"审核通过",
+        '5':"审核不通过",
+        '2':"继续跟进",
+      }
+      var reviewedResultCode = formValue.reviewedResultCode;//审核结果
+      var rejectReason = formValue.rejectReason;
+      var otherReason = formValue.otherReason;
+      if(!reviewedResultCode){
+        $.Toast.getInstance().showError("审核结果不能为空");
+        return;
+      }
+      if(_this.taskType == "35" && reviewedResultCode == "5" && !rejectReason){
+        $.Toast.getInstance().showError("审核不通过原因不能为空");
+        return;
+      }
+      var nameList = [];
+      var nameCodeList = [];
+      var url = '';
+      var data = {};
+      _.each(rejectReason,function(item){
+        var obj = JSON.parse(item);
+        var key = Object.keys(obj)[0];
+        var val = obj[key];
+        nameCodeList.push(key);
+        nameList.push(val);
+      })
+
+      if(reviewedResultCode == "4" || reviewedResultCode == "5"){//审核通过 不通过
+        url = $.api.submitHouseQAdone;
+        if(_this.taskType == "34"){
+          data = {
+            project:_this.project,
+            taskId:_this.taskId,
+            taskType:_this.taskType,
+            bizField:JSON.stringify({
+              reviewedRemark:'',
+              reviewedResult:resultObj[reviewedResultCode],
+              reviewedResultCode:reviewedResultCode?reviewedResultCode:'',
+              questionRejectReason:nameList.length > 0 ? nameList.join('；') : "",
+              questionRejectReasonCode:nameCodeList.length > 0 ? nameCodeList.join() : "",
+              answerRejectReason:"",
+              answerRejectReasonCode:"",
+              state:reviewedResultCode?reviewedResultCode:'',
+              otherReason:otherReason?otherReason:''
+            })
+          }
+        }else{
+          data = {
+            project:_this.project,
+            taskId:_this.taskId,
+            taskType:_this.taskType,
+            bizField:JSON.stringify({
+              reviewedRemark:'',
+              reviewedResultCode:reviewedResultCode?reviewedResultCode:'',
+              reviewedResult:resultObj[reviewedResultCode],
+              questionRejectReason: "",
+              questionRejectReasonCode:"",
+              answerRejectReason:nameList.length > 0 ? nameList.join(';') : "",
+              answerRejectReasonCode:nameCodeList.length > 0 ? nameCodeList.join() : "",
+              state:reviewedResultCode?reviewedResultCode:'',
+              otherReason:otherReason?otherReason:''
+            })
+          }
+        }
+      }else{
+        url = $.api.submitHouseQAfollow; //继续跟进
+        data = {
+          project:_this.project,
+          taskId:_this.taskId,
+          taskType:_this.taskType,
+          bizField:JSON.stringify({
+            reviewedRemark:'',
+            reviewedResultCode:reviewedResultCode?reviewedResultCode:'',
+            reviewedResult:'',
+            state:reviewedResultCode?reviewedResultCode:'',
+            answerRejectReason:"",
+            answerRejectReasonCode:"",
+            questionRejectReason: "",
+            questionRejectReasonCode:"",
+          })
+        }
+      }
+
+      var target = $(e.currentTarget)
+
+      if (Button.isLock(target)) {
+        return false;
+      } else {
+        var saveReq = new $.Trans({
+          url: url,
+          method: 'POST',
+          contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
+          data: data
+        });
+        saveReq.request().done(function (data) {
+          Button.unLock(target);
+          if (data.code == 1) {
+            $.Toast.getInstance().showSuccess('操作成功', 500);
+            _this.getNextData();
+
+          } else {
+            $.Toast.getInstance().showError(data.msg || '提交失败!');
+          }
+        }).fail(function () {
+          $.Toast.getInstance().showError('提交失败!');
+          Button.unLock(target);
+          return false
+        });
+      }
+    },
+    getNextData:function(){
+      var _this = this;
+      console.log(_this.queryParams)
+      var request = new $.Trans({
+        url: $.api.getHouseQANextTaskNew,
+        // data: {
+        //   project:'keHouseQA',
+        //   taskType:_this.taskType,
+        // }
+        data: _this.queryParams
+      });
+      request.request().done(function (data) {
+        if (data.code == 1) {
+          _this.project = data.data.project;
+          _this.taskId = data.data.bizField.taskId;
+          _this.state = data.data.bizField.state;
+
+          var paramList = location.hash.split('/');
+          paramList.pop();
+          paramList.push(_this.taskId)
+          var newParam = paramList.join("/");
+
+          _this.$el.find('.houseQACheckInfo').html(_.template(_this.$el.find('.verifyTemplate').html())(data));
+          
+          _this.form = new Form({
+            el: _this.$el.find('form')
+          });
+        } else {
+          $.Toast.getInstance().showError(data.msg || '获取下一条数据失败!');
+        }
+      }).fail(function () {
+        $.Toast.getInstance().showError('获取下一条数据失败!');
+      });
+    },
+    showError: function (element, text) {
+      scrollIntoView(element, function () {
+        $.Toast.getInstance().showError(text, 1000);
+      });
+    },
+  });
+});
